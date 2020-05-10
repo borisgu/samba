@@ -3,8 +3,9 @@ MAINTAINER David Personette <dperson@gmail.com>
 
 # Install samba
 RUN apk --no-cache --no-progress upgrade && \
-    apk --no-cache --no-progress add bash samba shadow tini && \
-    adduser -D -G users -H -S -g 'Samba User' -h /tmp smbuser && \
+    apk --no-cache --no-progress add bash samba shadow tini tzdata && \
+    addgroup -S smb && \
+    adduser -S -D -H -h /tmp -s /sbin/nologin -G smb -g 'Samba User' smbuser &&\
     file="/etc/samba/smb.conf" && \
     sed -i 's|^;* *\(log file = \).*|   \1/dev/stdout|' $file && \
     sed -i 's|^;* *\(load printers = \).*|   \1no|' $file && \
@@ -23,36 +24,35 @@ RUN apk --no-cache --no-progress upgrade && \
     echo '   directory mask = 0775' >>$file && \
     echo '   force directory mode = 0775' >>$file && \
     echo '   force user = smbuser' >>$file && \
-    echo '   force group = users' >>$file && \
+    echo '   force group = smb' >>$file && \
     echo '   follow symlinks = yes' >>$file && \
     echo '   load printers = no' >>$file && \
     echo '   printing = bsd' >>$file && \
     echo '   printcap name = /dev/null' >>$file && \
     echo '   disable spoolss = yes' >>$file && \
-    echo '   socket options = TCP_NODELAY' >>$file && \
     echo '   strict locking = no' >>$file && \
+    echo '   aio read size = 0' >>$file && \
+    echo '   aio write size = 0' >>$file && \
     echo '   vfs objects = acl_xattr catia fruit recycle streams_xattr' \
                 >>$file && \
     echo '   recycle:keeptree = yes' >>$file && \
+    echo '   recycle:maxsize = 0' >>$file && \
+    echo '   recycle:repository = .deleted' >>$file && \
     echo '   recycle:versions = yes' >>$file && \
     echo '' >>$file && \
     echo '   # Security' >>$file && \
-    echo '   client ipc max protocol = default' >>$file && \
-    echo '   client max protocol = default' >>$file && \
+    echo '   client ipc max protocol = SMB3' >>$file && \
+    echo '   client ipc min protocol = SMB2_10' >>$file && \
+    echo '   client max protocol = SMB3' >>$file && \
+    echo '   client min protocol = SMB2_10' >>$file && \
     echo '   server max protocol = SMB3' >>$file && \
-    echo '   client ipc min protocol = default' >>$file && \
-    echo '   client min protocol = CORE' >>$file && \
-    echo '   server min protocol = SMB2' >>$file && \
+    echo '   server min protocol = SMB2_10' >>$file && \
     echo '' >>$file && \
     echo '   # Time Machine' >>$file && \
-    echo '   durable handles = yes' >>$file && \
-    echo '   kernel oplocks = no' >>$file && \
-    echo '   kernel share modes = no' >>$file && \
-    echo '   posix locking = no' >>$file && \
-    echo '   fruit:aapl = yes' >>$file && \
-    echo '   fruit:advertise_fullsync = true' >>$file && \
+    echo '   fruit:delete_empty_adfiles = yes' >>$file && \
     echo '   fruit:time machine = yes' >>$file && \
-    echo '   smb2 leases = yes' >>$file && \
+    echo '   fruit:veto_appledouble = no' >>$file && \
+    echo '   fruit:wipe_intentionally_left_blank_rfork = yes' >>$file && \
     echo '' >>$file && \
     rm -rf /tmp/*
 
@@ -61,7 +61,7 @@ COPY samba.sh /usr/bin/
 EXPOSE 137/udp 138/udp 139 445
 
 HEALTHCHECK --interval=60s --timeout=15s \
-            CMD smbclient -L '\\localhost' -U '%' -m SMB3
+            CMD smbclient -L \\localhost -U % -m SMB3
 
 VOLUME ["/etc", "/var/cache/samba", "/var/lib/samba", "/var/log/samba",\
             "/run/samba"]

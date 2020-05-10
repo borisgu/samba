@@ -30,7 +30,7 @@ charmap() { local chars="$1" file=/etc/samba/smb.conf
 
                 ' $file
 
-    sed -i '/catia:mappings/s/ =.*/ = '"$chars" $file
+    sed -i '/catia:mappings/s| =.*| = '"$chars"'|' $file
 }
 
 ### global: set a global config option
@@ -75,13 +75,14 @@ perms() { local i file=/etc/samba/smb.conf
         find $i -type f ! -perm 0664 -exec chmod 0664 {} \;
     done
 }
+export -f perms
 
 ### recycle: disable recycle bin
 # Arguments:
 #   none)
 # Return: result
 recycle() { local file=/etc/samba/smb.conf
-    sed -i '/recycle/d; /vfs/d' $file
+    sed -i '/recycle:/d; /vfs objects/s/ recycle / /' $file
 }
 
 ### share: Add share
@@ -105,11 +106,13 @@ share() { local share="$1" path="$2" browsable="${3:-yes}" ro="${4:-yes}" \
     echo "   browsable = $browsable" >>$file
     echo "   read only = $ro" >>$file
     echo "   guest ok = $guest" >>$file
-    echo -n "   veto files = /._*/.apdisk/.AppleDouble/.DS_Store/" >>$file
-    echo -n ".TemporaryItems/.Trashes/desktop.ini/ehthumbs.db/" >>$file
-    echo "Network Trash Folder/Temporary Items/Thumbs.db/" >>$file
-    echo "   delete veto files = yes" >>$file
-    [[ ${users:-""} && ! ${users:-""} =~ all ]] &&
+    [[ ${VETO:-yes} == no ]] || {
+        echo -n "   veto files = /.apdisk/.DS_Store/.TemporaryItems/" >>$file
+        echo -n ".Trashes/desktop.ini/ehthumbs.db/Network Trash Folder/" >>$file
+        echo "Temporary Items/Thumbs.db/" >>$file
+        echo "   delete veto files = yes" >>$file
+    }
+    [[ ${users:-""} && ! ${users:-""} == all ]] &&
         echo "   valid users = $(tr ',' ' ' <<< $users)" >>$file
     [[ ${admins:-""} && ! ${admins:-""} =~ none ]] &&
         echo "   admin users = $(tr ',' ' ' <<< $admins)" >>$file
@@ -126,7 +129,7 @@ share() { local share="$1" path="$2" browsable="${3:-yes}" ro="${4:-yes}" \
 #   none)
 # Return: result
 smb() { local file=/etc/samba/smb.conf
-    sed -i '/min protocol/d' $file
+    sed -i 's/\([^#]*min protocol *=\).*/\1 LANMAN1/' $file
 }
 
 ### user: add a user
@@ -135,9 +138,12 @@ smb() { local file=/etc/samba/smb.conf
 #   password) for user
 #   id) for user
 #   group) for user
+#   gid) for group
 # Return: user added to container
-user() { local name="$1" passwd="$2" id="${3:-""}" group="${4:-""}"
-    [[ "$group" ]] && { grep -q "^$group:" /etc/group || addgroup "$group"; }
+user() { local name="$1" passwd="$2" id="${3:-""}" group="${4:-""}" \
+                gid="${5:-""}"
+    [[ "$group" ]] && { grep -q "^$group:" /etc/group ||
+                addgroup ${gid:+--gid $gid }"$group"; }
     grep -q "^$name:" /etc/passwd ||
         adduser -D -H ${group:+-G $group} ${id:+-u $id} "$name"
     echo -e "$passwd\n$passwd" | smbpasswd -s -a "$name"
@@ -187,16 +193,18 @@ Options (fields in '[]' are optional, '<>' are required):
                 [browsable] default:'yes' or 'no'
                 [readonly] default:'yes' or 'no'
                 [guest] allowed default:'yes' or 'no'
+                NOTE: for user lists below, usernames are separated by ','
                 [users] allowed default:'all' or list of allowed users
                 [admins] allowed default:'none' or list of admin users
                 [writelist] list of users that can write to a RO share
                 [comment] description of share
-    -u \"<username;password>[;ID;group]\"       Add a user
+    -u \"<username;password>[;ID;group;GID]\"       Add a user
                 required arg: \"<username>;<passwd>\"
                 <username> for user
                 <password> for user
                 [ID] for user
                 [group] for user
+                [GID] for group
     -w \"<workgroup>\"       Configure the workgroup (domain) samba should use
                 required arg: \"<workgroup>\"
                 <workgroup> for samba
@@ -211,7 +219,7 @@ The 'command' (if provided and valid) will be run instead of samba
 }
 
 [[ "${USERID:-""}" =~ ^[0-9]+$ ]] && usermod -u $USERID -o smbuser
-[[ "${GROUPID:-""}" =~ ^[0-9]+$ ]] && groupmod -g $GROUPID -o users
+[[ "${GROUPID:-""}" =~ ^[0-9]+$ ]] && groupmod -g $GROUPID -o smb
 
 while getopts ":hc:g:i:nprs:Su:Ww:I:" opt; do
     case "$opt" in
@@ -235,16 +243,22 @@ done
 shift $(( OPTIND - 1 ))
 
 [[ "${CHARMAP:-""}" ]] && charmap "$CHARMAP"
-[[ "${GLOBAL:-""}" ]] && global "$GLOBAL"
+while read i; do
+    global "$i"
+done < <(env | awk '/^GLOBAL[0-9=_]/ {sub (/^[^=]*=/, "", $0); print}')
 [[ "${IMPORT:-""}" ]] && import "$IMPORT"
-[[ "${PERMISSIONS:-""}" ]] && perms
 [[ "${RECYCLE:-""}" ]] && recycle
-[[ "${SHARE:-""}" ]] && eval share $(sed 's/^/"/; s/$/"/; s/;/" "/g' <<< $SHARE)
+while read i; do
+    eval share $(sed 's/^/"/; s/$/"/; s/;/" "/g' <<< $i)
+done < <(env | awk '/^SHARE[0-9=_]/ {sub (/^[^=]*=/, "", $0); print}')
 [[ "${SMB:-""}" ]] && smb
-[[ "${USER:-""}" ]] && eval user $(sed 's/^/"/; s/$/"/; s/;/" "/g' <<< $USER)
+while read i; do
+    eval user $(sed 's/^/"/; s/$/"/; s/;/" "/g' <<< $i)
+done < <(env | awk '/^USER[0-9=_]/ {sub (/^[^=]*=/, "", $0); print}')
 [[ "${WORKGROUP:-""}" ]] && workgroup "$WORKGROUP"
 [[ "${WIDELINKS:-""}" ]] && widelinks
 [[ "${INCLUDE:-""}" ]] && include "$INCLUDE"
+[[ "${PERMISSIONS:-""}" ]] && perms &
 
 if [[ $# -ge 1 && -x $(which $1 2>&-) ]]; then
     exec "$@"
